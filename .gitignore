@@ -1,0 +1,5 @@
+__pycache__/
+flowauth_crack/work/*
+!flowauth_crack/work/.gitkeep
+node_modules/
+*.log
