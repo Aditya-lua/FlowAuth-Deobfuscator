@@ -80,6 +80,16 @@ def main():
         if old is not None and len(old_dev) == len(old) + 76 and old_dev[76:] == old:
             header = old_dev[:76]
     if header is None:
+        # fall back to the tracked capture's devirt input header (fresh clones
+        # have no old work/ file; the payload itself starts with the LRM
+        # prelude, not the banner)
+        tracked = os.path.join(os.path.dirname(os.path.dirname(work.rstrip("/"))),
+                               "flowauth_capture", "payload_devirt.lua")
+        if os.path.exists(tracked):
+            header = open(tracked, "rb").read()[:76]
+            if not header.startswith(b"-- This file was protected using Luraph"):
+                header = None
+    if header is None:
         m = re.search(rb"-- This file was protected using Luraph Obfuscator v15\.0[^\n]*\n", full)
         header = full[:m.end()] if m else b""
         print("[i] header derived from payload itself: %r" % header[:60])
