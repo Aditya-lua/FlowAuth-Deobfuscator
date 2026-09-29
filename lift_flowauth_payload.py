@@ -5,8 +5,9 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-sys.path.insert(0, os.path.join(ROOT, "core"))
+ROOT = HERE  # this script lives at the repo root
+MAIN = "/home/z/my-project/Deobfuscator-Luraph-V15"
+sys.path.insert(0, os.path.join(MAIN, "core"))
 
 from obfuscators.luraph_v15 import devirt  # noqa: E402
 

@@ -50,13 +50,16 @@ def http(method, url, body=None):
         return e.code, e.read().decode("latin1"), dict(e.headers)
 
 
-LOADER_URL = "https://flowauth.net/v1/loaders/29f4f4b924aff467652814456286bb05.lua"
+DEFAULT_LOADER_URL = "https://flowauth.net/v1/loaders/29f4f4b924aff467652814456286bb05.lua"
+LOADER_URL = DEFAULT_LOADER_URL
 
 
-def refresh_loader():
+def refresh_loader(loader_url=None):
     """Fetch a FRESH loader (its _bsdata0 launch_ticket is single-use: the
     server rejects a replayed challenge with 401 launch_ticket_rejected) and
     re-patch envlog.luau with its handoff + an empty canned map."""
+    global LOADER_URL
+    LOADER_URL = loader_url or LOADER_URL
     open(os.path.join(WORK, "canned.json"), "w").write("{}")
     status, loader, _ = http("GET", LOADER_URL)
     if status != 200:
@@ -74,8 +77,15 @@ def refresh_loader():
 
 
 def main():
-    max_hops = int(sys.argv[1]) if len(sys.argv) > 1 else 24
-    refresh_loader()
+    import argparse
+    ap = argparse.ArgumentParser(description="FlowAuth one-process live chain")
+    ap.add_argument("hops", nargs="?", type=int, default=24, help="max HTTP hops (default 24)")
+    ap.add_argument("--loader-url", default=None,
+                    help="any flowauth.net /v1/loaders/<md5>.lua URL "
+                         "(default: the ps2 loader 29f4f4b9...) -- ready for new scripts")
+    args = ap.parse_args()
+    max_hops = args.hops
+    refresh_loader(args.loader_url)
     boot = open(BOOT, encoding="latin1").read()
     cfg = {
         "time_budget": 900, "executor": "Wave", "devirt": False,
