@@ -2,6 +2,52 @@
 
 > Updated every session so context is never lost. Latest entry first.
 
+## 2026-09-29 (evenest) — RaceforEggs (v14.9) direct devirt: 119/119 protos lifted
+
+Session scope (user): "this session should be only devirtualizing luraph v15 scripts" +
+"Only give me lurapi v15 code behind it". Ran the user's RaceforEggs URL through the
+DIRECT Luraph pipeline (not the FlowAuth chain).
+
+**Deliverable:** `/home/z/my-project/download/RaceforEggs.devirtualized.lua`
+(9.5k lines, all 119 captured protos lifted, 0 lift failures, 17 residual error
+markers = paths whose constants the sandbox trace never decoded).
+
+**v14.9 lifter fixes landed in Deobfuscator-Luraph-V15 this session:**
+1. `value_of`: hash-keyed VM tables now render as table constructors (`table_ctor`)
+   instead of raising "storing a non-empty VM table" (config tables `{url=...}` are
+   everywhere in real scripts).
+2. `_locs_lt`: total-order comparison for carried-locals tuples (int/None mixing
+   crashed the backward-jump hub test).
+3. `MAX_STACK_DEPTHS` limiter now keys on the stack-POINTER value, not the whole
+   locs tuple — object-carrying states (decryptor Bufs, OpaqueFns) no longer
+   exhaust the depth budget spuriously. Error markers 64 → 17 on RaceforEggs.
+4. Walk `edges`/`pred` dicts are now walk-LOCAL (nothing ever read them) — holding
+   them through `lower()` was the main OOM driver on deep proto chains.
+5. `sys.intern` on `fmt_expr` output + `_carry_key` strings (state keys repeat
+   these by the million) + periodic `gc.collect()` in `closure()`.
+
+**OOM lesson (deep chains):** a single in-process lift of a ~119-deep nested proto
+chain holds every ancestor's IR alive during `lower()` and OOMs a 4 GB container
+(~85 % at depth ~65-81, two runs died). Fix = `DEVIRT_SHALLOW=1` (children become
+`__DEVIRT_CHILD__(p<pid>|t<tid>)` markers) + `tools/lift_all.py` which lifts every
+captured proto SEQUENTIALLY (walk state is walk-local now) and splices the markers
+recursively. `tools/lift_child.py` lifts one tid standalone.
+
+**Renderer guard:** `codegen.Renderer.lvalue` renders Const/raw-int assign targets
+(a numeric-for recognition side effect) as `__SLOT_N__` so the output always parses
+(luau-ast verified).
+
+**Golden regression caveat (pre-existing, NOT from these changes):** at main-repo
+HEAD e24ecb1 the two RUN_GOLDEN samples (5ae…, RideAPet) do not reproduce their
+committed references IN THIS CONTAINER — the sandbox trace dies with
+"table index is nil" (5ae = FlowAuth-protected loader; flowauth.net now 403s plain
+GETs; RideAPet's loadstring'd chunk errors identically on the CLEAN tree). The goldens
+were generated from the later lost luarmor commits (a5dcd4c/01ebbbd, wiped by a
+container reset before push). With the session's changes the lifts COMPLETE where the
+clean tree failed outright ("call of unknown VM function lf1"); npm test 36/36 green.
+
+---
+
 ## 2026-09-29 (later) — ROUND-2: the grind is SOLVED, full capture obtained
 
 **This is the big one.** All previous capture attempts (capture_v3/v4, /tmp/fresh_raw*.txt)
