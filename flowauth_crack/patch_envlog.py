@@ -30,18 +30,24 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_REPO = "/home/z/my-project/Deobfuscator-Luraph-V15"  # main repo
+sys.path.insert(0, HERE)
+import flowauth_loader as fl  # noqa: E402
+
 MARK = "[SUPERZ]"
 
 parser = argparse.ArgumentParser(description="Patch envlog.luau for FlowAuth")
-parser.add_argument("--repo", default=DEFAULT_REPO, help="deobfuscator repo root")
+parser.add_argument("--repo", default=None,
+                    help="deobfuscator repo root (else FLOWAUTH_REPO / auto-discover)")
 parser.add_argument("--loader", default=os.path.join(HERE, "work", "loader.lua"),
                     help="fresh FlowAuth loader .lua (contains the handoff line)")
 parser.add_argument("--canned", default=os.path.join(HERE, "work", "canned.json"),
                     help="JSON map 'METHOD url' -> {status, body}")
 args = parser.parse_args()
 
-REPO = args.repo
+try:
+    REPO = fl.find_repo(args.repo)
+except fl.LoaderError as e:
+    sys.exit("error: %s" % e)
 ENVPATH = os.path.join(REPO, "runtime", "envlog.luau")
 LOADER = args.loader
 CANNED_JSON = args.canned if os.path.exists(args.canned) else None
