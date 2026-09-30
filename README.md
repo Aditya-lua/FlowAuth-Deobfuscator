@@ -31,19 +31,32 @@ fetches a fresh loader.
 
 ## Usage
 
-```bash
-# hop-by-hop chain (fresh loader → auth → payload chunks)
-python3 flowauth_crack/flowauth_chain.py
+The fetcher works on **any** `flowauth.net/v1/loaders/<md5>.lua` URL — it fetches
+a fresh loader, downloads + verifies the current stage-2 runtime, runs the auth
+handshake in the Luau sandbox, and reassembles the raw obfuscated payload.
 
-# one-process end-to-end (live fetch loop + NEEDFETCH/__LRMRES serve contract)
-python3 flowauth_crack/flowauth_two_phase.py
+```bash
+# the Luau sandbox (bin/luau + runtime/envlog.luau + core/harness.py) lives in the
+# Deobfuscator-Luraph-V15 repo; point at it once (or let it auto-discover a sibling):
+export FLOWAUTH_REPO=/path/to/Deobfuscator-Luraph-V15
+
+# one-process end-to-end fetch for ANY loader URL -> work/<md5>.payload.lua
+python3 flowauth_crack/flowauth_two_phase.py \
+  --loader-url https://flowauth.net/v1/loaders/<md5>.lua
+
+# inspect / fetch just the stage-2 runtime for a URL (pure Python, no sandbox)
+python3 flowauth_crack/flowauth_loader.py https://flowauth.net/v1/loaders/<md5>.lua -o runtime.lua
+
+# hop-by-hop chain (older driver; fresh loader → auth → payload chunks)
+python3 flowauth_crack/flowauth_chain.py --loader-url https://flowauth.net/v1/loaders/<md5>.lua
 
 # reassemble the payload python-side (bypasses the runtime's own lz4 step)
 python3 flowauth_crack/reassemble_payload.py
 ```
 
-The devirt core (`src/vmmap`, `core/devirt.py`, `bin/luau`) still lives in the
-main repo; scripts here reference it via absolute path.
+`--repo PATH` overrides the sandbox location; otherwise `FLOWAUTH_REPO` or a sibling
+`Deobfuscator-Luraph-V15` / `deobfuscator-luraph-v15` directory is auto-discovered.
+The devirt core (`src/vmmap`, `core/devirt.py`, `bin/luau`) still lives in the main repo.
 
 ## Status
 
