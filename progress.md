@@ -2,6 +2,51 @@
 
 > Updated every session so context is never lost. Latest entry first.
 
+## 2026-09-30 — generalized the fetcher: fetch the obfuscated payload for ANY loader URL
+
+Session scope (user): "make my FlowAuth fetcher actually be able to fetch actual
+obfuscated code from any flowauth url" (example `29f4f4b9…`).
+
+**Problem (root cause).** The fetcher was hardwired to one script and one stale
+capture, so it could not fetch an arbitrary `/v1/loaders/<md5>.lua`:
+1. both drivers hardcoded `REPO = /home/z/my-project/Deobfuscator-Luraph-V15` at
+   *import time* → `ImportError`/exit off that one machine;
+2. the run needed a **pre-placed** `work/runtime_marbeg.lua` + `work/bootstrapper.lua`
+   for one specific script — nothing fetched the stage-2 runtime for a new URL;
+3. the tracked runtime is **stale**: `29f4f4b9…` now serves sha `48a019dd…` / **598455 B**
+   (was `87c8738e…` / 586282 B), so even the original URL was broken;
+4. plain GETs get a 266 B decoy ("automated source fetching is not allowed") — the
+   real loader only comes back with `User-Agent: Roblox/Win32` + `X-FlowAuth-Protocol: 3`.
+
+**Fix.**
+- New `flowauth_crack/flowauth_loader.py` (stdlib-only, independently testable): the
+  generalizable front-half — `fetch_loader` (Roblox UA + decoy detection),
+  `parse_loader` (decode escapes → stage-2 URL candidates, expected size, Adler
+  target, both `_bsdata0` handoffs, md5), `adler_flow` (the loader's 8-byte-stepped
+  checksum), `fetch_runtime` (try primary/pinned/retry/IP-fallback, verify size +
+  checksum), `find_repo` (auto-discover the sandbox repo via `--repo`/`FLOWAUTH_REPO`/
+  sibling + shallow scan), `build_bootstrapper` (shared wrapper).
+- `flowauth_two_phase.py` reworked into a true any-URL fetcher: discover repo → fetch
+  loader → download+verify runtime → build bootstrapper → patch envlog with the fresh
+  handoff → run the proven live serve/plant/resume loop → reassemble → write
+  `work/<md5>.payload.lua`. Import-time hardcoding gone.
+- `patch_envlog.py`, `flowauth_chain.py`, `gen_boot.py`: removed hardcoded repo path
+  (now `find_repo`); `gen_boot.py` + `flowauth_chain.py` reuse the shared builder and
+  point at the current example URL.
+
+**Verified live in this container** (cloud, luau sandbox from the sibling repo):
+full from-scratch fetch of `29f4f4b9…` → fresh loader (9690 B) → verified 598455 B
+runtime → 4 live hops (challenge → script → payload×2) → reassembled **713630 B**
+(server `source_bytes` match), head `LRM_ScriptName="Flow Loader"`, Luraph v15 banner
+present. Output: `work/29f4f4b924aff467652814456286bb05.payload.lua`.
+
+**Run it (any URL):**
+```bash
+export FLOWAUTH_REPO=/path/to/Deobfuscator-Luraph-V15   # or let it auto-discover
+python3 flowauth_crack/flowauth_two_phase.py --loader-url https://flowauth.net/v1/loaders/<md5>.lua
+# raw obfuscated payload -> flowauth_crack/work/<md5>.payload.lua
+```
+
 ## 2026-09-29 (evenest) — RaceforEggs (v14.9) direct devirt: 119/119 protos lifted
 
 Session scope (user): "this session should be only devirtualizing luraph v15 scripts" +

@@ -29,18 +29,23 @@ import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_REPO = "/home/z/my-project/Deobfuscator-Luraph-V15"  # main repo
+sys.path.insert(0, HERE)
+import flowauth_loader as fl  # noqa: E402
 
 parser = argparse.ArgumentParser(description="Automated live FlowAuth chain")
 parser.add_argument("max_hops", nargs="?", type=int, default=8)
-parser.add_argument("--repo", default=DEFAULT_REPO)
+parser.add_argument("--repo", default=None,
+                    help="Deobfuscator-Luraph-V15 repo (else FLOWAUTH_REPO / auto-discover)")
 parser.add_argument("--boot", default=os.path.join(HERE, "work", "bootstrapper.lua"))
 parser.add_argument("--loader-url",
-                    default="https://flowauth.net/v1/loaders/77501b3d13125c45bb154f658e34e4cc.lua")
+                    default="https://flowauth.net/v1/loaders/29f4f4b924aff467652814456286bb05.lua")
 parser.add_argument("--workdir", default=os.path.join(HERE, "work"))
 args = parser.parse_args()
 
-REPO = os.path.abspath(args.repo)
+try:
+    REPO = fl.find_repo(args.repo)
+except fl.LoaderError as e:
+    sys.exit("error: %s" % e)
 BASE = os.path.abspath(args.workdir)
 LOADER_URL = args.loader_url
 BOOT_PATH = os.path.abspath(args.boot)
