@@ -1,21 +1,36 @@
 #!/usr/bin/env python3
-"""In-process FlowAuth chain -- one luau process for the WHOLE session:
+"""In-process FlowAuth chain -- fetch the obfuscated payload behind ANY
+``https://flowauth.net/v1/loaders/<md5>.lua`` URL, in one luau process.
 
-  start -> the runtime leaks every HTTP hop (\\1SUPERZREQ\\1 marker:
-  base64 "method|url|body") and SUSPENDS the run (__LRMRES yield);
-  this driver answers the hop LIVE (with the FlowAuth headers the
-  previous hop-by-hop chain proved out), plants the response via serve
-  mode "plant" and resumes the exact thread. Same process = same session
-  nonce, so the payload response authentication (payload_proof over the
-  session's own challenge/proof material) holds -- cross-run replay
-  could never work (observed: "payload response authentication failed").
+What it does, driven entirely by the loader URL (nothing is pinned to one
+script):
 
-When the run finishes, every loadstring'd chunk (the Luraph-protected
-payload) is captured from the CHUNK dump.
+  0. GET the loader (Roblox HttpGet headers -- the server serves a decoy
+     otherwise), decode it, and recover the stage-2 runtime URL, its size and
+     checksum, and the _bsdata0 handoff  (flowauth_loader.py).
+  1. Download + VERIFY the stage-2 Luraph runtime (size + the loader's own
+     Adler-32), then wrap it as a bootstrapper.
+  2. Patch the envlog sandbox with the loader's handoff + crypto/JSON shims
+     (patch_envlog.py) and start ONE luau process for the whole session.
+  3. The runtime leaks every HTTP hop (\\1SUPERZREQ\\1 marker: base64
+     "method|url|body") and SUSPENDS the run (__LRMRES yield); this driver
+     answers the hop LIVE, plants the response (serve mode "plant") and
+     resumes the exact thread. Same process = same session nonce, so the
+     payload response authentication holds (cross-run replay never works).
+  4. When the run finishes, every loadstring'd chunk (the Luraph-protected
+     payload) is captured, then reassembled into the raw payload source.
 
-Usage: python3 flowauth_two_phase.py [max_hops]
+The Luau sandbox (bin/luau + runtime/envlog.luau + core/harness.py) lives in
+the Deobfuscator-Luraph-V15 repo; it is auto-discovered (--repo / FLOWAUTH_REPO
+/ sibling paths).
+
+Usage:
+    python3 flowauth_two_phase.py [max_hops] \\
+        [--loader-url https://flowauth.net/v1/loaders/<md5>.lua] [--repo PATH]
 """
+import argparse
 import base64
+import importlib
 import os
 import re
 import select
@@ -26,17 +41,29 @@ import time
 import urllib.error
 import urllib.request
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "/home/z/my-project/Deobfuscator-Luraph-V15"  # main repo (core/, bin/luau, runtime/envlog.luau)
-sys.path.insert(0, os.path.join(REPO, "core"))
-import harness  # noqa: E402
+import flowauth_loader as fl
 
-LUAU = os.path.join(REPO, "bin", "luau")
-BOOT = os.path.join(HERE, "work", "bootstrapper.lua")
+HERE = os.path.dirname(os.path.abspath(__file__))
 WORK = os.path.join(HERE, "work")
+DEFAULT_LOADER_URL = "https://flowauth.net/v1/loaders/29f4f4b924aff467652814456286bb05.lua"
 HDRS = {"Content-Type": "application/json", "Accept": "application/json",
         "X-FlowAuth-Protocol": "3", "User-Agent": "Roblox/Win32"}
 B64RE = re.compile("\x01SUPERZREQ\x01([A-Za-z0-9+/=]+)")
+
+# Set by setup_repo() once the sandbox repo is discovered.
+harness = None
+REPO = LUAU = BOOT = None
+
+
+def setup_repo(repo_arg=None):
+    """Discover the Deobfuscator-Luraph-V15 repo and wire up harness/luau."""
+    global harness, REPO, LUAU, BOOT
+    REPO = fl.find_repo(repo_arg)
+    sys.path.insert(0, os.path.join(REPO, "core"))
+    harness = importlib.import_module("harness")
+    LUAU = harness.find_luau()
+    BOOT = os.path.join(WORK, "bootstrapper.lua")
+    print("[*] sandbox repo: %s" % REPO)
 
 
 def http(method, url, body=None):
@@ -50,23 +77,34 @@ def http(method, url, body=None):
         return e.code, e.read().decode("latin1"), dict(e.headers)
 
 
-DEFAULT_LOADER_URL = "https://flowauth.net/v1/loaders/29f4f4b924aff467652814456286bb05.lua"
-LOADER_URL = DEFAULT_LOADER_URL
+def refresh_loader(loader_url):
+    """Fetch a FRESH loader for ``loader_url``, download + verify its stage-2
+    runtime, build the bootstrapper, and re-patch envlog with the loader's
+    handoff + an empty canned map. Returns the parsed :class:`LoaderInfo`.
 
-
-def refresh_loader(loader_url=None):
-    """Fetch a FRESH loader (its _bsdata0 launch_ticket is single-use: the
-    server rejects a replayed challenge with 401 launch_ticket_rejected) and
-    re-patch envlog.luau with its handoff + an empty canned map."""
-    global LOADER_URL
-    LOADER_URL = loader_url or LOADER_URL
+    The loader's _bsdata0 launch_ticket is single-use (a replayed challenge is
+    rejected 401 launch_ticket_rejected), so every run starts from a fresh one.
+    """
+    os.makedirs(WORK, exist_ok=True)
     open(os.path.join(WORK, "canned.json"), "w").write("{}")
-    status, loader, _ = http("GET", LOADER_URL)
-    if status != 200:
-        sys.exit("fresh loader fetch failed: %d" % status)
+
+    src = fl.fetch_loader(loader_url)
+    info = fl.parse_loader(src, loader_url)
     loader_p = os.path.join(WORK, "loader.lua")
-    open(loader_p, "w", encoding="latin1").write(loader)
-    print("[0] fresh loader: %d B (handoff ticket refreshed)" % len(loader))
+    open(loader_p, "w", encoding="latin1").write(src)
+    print("[0] fresh loader: %d B (md5 %s, handoff ticket refreshed)"
+          % (len(src), info.md5 or "?"))
+
+    runtime, used_alt = fl.fetch_runtime(info)
+    open(os.path.join(WORK, "runtime_marbeg.lua"), "wb").write(runtime)
+    if used_alt:
+        print("    [!] runtime came from a fallback URL; envlog uses the normal "
+              "handoff -- if auth fails, the alternate handoff may be needed")
+    boot = fl.build_bootstrapper(runtime.decode("latin1"), harness.long_string)
+    with open(BOOT, "w", encoding="latin1", newline="\n") as f:
+        f.write(boot)
+    print("    bootstrapper %d B (runtime %d B)" % (len(boot), len(runtime)))
+
     r = subprocess.run([sys.executable, os.path.join(HERE, "patch_envlog.py"),
                         "--repo", REPO, "--loader", loader_p,
                         "--canned", os.path.join(WORK, "canned.json")],
@@ -74,18 +112,49 @@ def refresh_loader(loader_url=None):
     if r.returncode != 0:
         sys.exit("patch failed: " + r.stdout + r.stderr)
     print("    " + r.stdout.strip().replace("\n", "\n    "))
+    return info
+
+
+def reassemble(info):
+    """Reassemble the captured chunks into the raw payload source and copy it
+    to an md5-named file. Returns the payload path or None."""
+    import reassemble_payload
+    try:
+        reassemble_payload.main()
+    except SystemExit as e:
+        if e.code:
+            print("    [!] reassembly skipped: %s" % e.code)
+            return None
+    payload = os.path.join(WORK, "payload_source.lua")
+    if not os.path.exists(payload):
+        return None
+    if info.md5:
+        named = os.path.join(WORK, "%s.payload.lua" % info.md5)
+        with open(payload, "rb") as s, open(named, "wb") as d:
+            d.write(s.read())
+        return named
+    return payload
 
 
 def main():
-    import argparse
-    ap = argparse.ArgumentParser(description="FlowAuth one-process live chain")
+    ap = argparse.ArgumentParser(description="FlowAuth one-process live chain -- any loader URL")
     ap.add_argument("hops", nargs="?", type=int, default=24, help="max HTTP hops (default 24)")
-    ap.add_argument("--loader-url", default=None,
-                    help="any flowauth.net /v1/loaders/<md5>.lua URL "
-                         "(default: the ps2 loader 29f4f4b9...) -- ready for new scripts")
+    ap.add_argument("--loader-url", default=DEFAULT_LOADER_URL,
+                    help="any flowauth.net /v1/loaders/<md5>.lua URL")
+    ap.add_argument("--repo", default=None,
+                    help="Deobfuscator-Luraph-V15 repo (else FLOWAUTH_REPO / auto-discover)")
     args = ap.parse_args()
     max_hops = args.hops
-    refresh_loader(args.loader_url)
+
+    try:
+        setup_repo(args.repo)
+    except fl.LoaderError as e:
+        sys.exit("error: %s" % e)
+    try:
+        info = refresh_loader(args.loader_url)
+    except fl.LoaderError as e:
+        sys.exit("error: %s" % e)
+
     boot = open(BOOT, encoding="latin1").read()
     cfg = {
         "time_budget": 900, "executor": "Wave", "devirt": False,
@@ -243,6 +312,12 @@ def main():
         print("    (no chunks captured)")
         print("\n".join(data.splitlines()[-25:])[:3000])
     proc.kill()
+
+    payload = reassemble(info)
+    if payload:
+        print("[+] PAYLOAD (obfuscated source) -> %s (%d B)"
+              % (payload, os.path.getsize(payload)))
+        return 0
     return 0 if chunks else 1
 
 
