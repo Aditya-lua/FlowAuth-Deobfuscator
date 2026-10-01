@@ -3,3 +3,6 @@ flowauth_crack/work/*
 !flowauth_crack/work/.gitkeep
 node_modules/
 *.log
+
+# local-only notes (not committed)
+*.local.md
