@@ -1,5 +1,7 @@
 # FlowAuth-Deobfuscator
 
+> Tool by **@adi.codz** (Discord) — see [AUTHORS.md](AUTHORS.md).
+
 Standalone crack + devirtualization pipeline for **flowauth.net** protected Roblox
 scripts (FlowAuth v3 protocol / Luraph v15 payload). Split out of
 [Deobfuscator-Luraph-V15](https://github.com/Aditya-lua/Deobfuscator-Luraph-V15) —

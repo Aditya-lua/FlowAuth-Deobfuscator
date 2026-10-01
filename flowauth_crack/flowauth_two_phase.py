@@ -43,6 +43,11 @@ import urllib.request
 
 import flowauth_loader as fl
 
+# ─────────────────────────────────────────────
+#  FlowAuth-Deobfuscator -- Tool by @adi.codz (Discord)
+# ─────────────────────────────────────────────
+WATERMARK = "[adi.codz] FlowAuth fetcher -- Tool by @adi.codz (Discord)"
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORK = os.path.join(HERE, "work")
 DEFAULT_LOADER_URL = "https://flowauth.net/v1/loaders/29f4f4b924aff467652814456286bb05.lua"
@@ -145,6 +150,7 @@ def main():
                     help="Deobfuscator-Luraph-V15 repo (else FLOWAUTH_REPO / auto-discover)")
     args = ap.parse_args()
     max_hops = args.hops
+    print(WATERMARK)
 
     try:
         setup_repo(args.repo)
